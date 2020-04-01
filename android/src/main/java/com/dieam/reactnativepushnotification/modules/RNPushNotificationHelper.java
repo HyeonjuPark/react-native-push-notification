@@ -39,7 +39,12 @@ import static com.dieam.reactnativepushnotification.modules.RNPushNotificationAt
 public class RNPushNotificationHelper {
     public static final String PREFERENCES_KEY = "rn_push_notification";
     private static final long DEFAULT_VIBRATION = 300L;
+
     private static final String NOTIFICATION_CHANNEL_ID = "rn-push-notification-channel-id";
+    private static String NOTIFICATION_CHANNEL_ID_TMP = null;
+
+    private static final CharSequence NOTIFICATION_CHANNEL_NAME = "rn-push-notification-channel";
+    private static CharSequence NOTIFICATION_CHANNEL_NAME_TMP = null;
 
     private Context context;
     private RNPushNotificationConfig config;
@@ -209,12 +214,20 @@ public class RNPushNotificationHelper {
                 }
             }
 
-            NotificationCompat.Builder notification = new NotificationCompat.Builder(context, NOTIFICATION_CHANNEL_ID)
+            NOTIFICATION_CHANNEL_ID_TMP = ""+ NOTIFICATION_CHANNEL_ID;
+            NOTIFICATION_CHANNEL_NAME_TMP = ""+ NOTIFICATION_CHANNEL_NAME;
+
+            NotificationCompat.Builder notification = new NotificationCompat.Builder(context, NOTIFICATION_CHANNEL_ID_TMP)
                     .setContentTitle(title)
                     .setTicker(bundle.getString("ticker"))
                     .setVisibility(visibility)
                     .setPriority(priority)
                     .setAutoCancel(bundle.getBoolean("autoCancel", true));
+
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) { // API 26 and higher
+                // Changing Default mode of notification
+                notification.setDefaults(Notification.DEFAULT_LIGHTS);
+            }
 
             String group = bundle.getString("group");
             if (group != null) {
@@ -285,14 +298,11 @@ public class RNPushNotificationHelper {
             if (!bundle.containsKey("playSound") || bundle.getBoolean("playSound")) {
                 soundUri = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_NOTIFICATION);
                 String soundName = bundle.getString("soundName");
-
                 if (soundName != null) {
                     if (!"default".equalsIgnoreCase(soundName)) {
-
                         // sound name can be full filename, or just the resource name.
                         // So the strings 'my_sound.mp3' AND 'my_sound' are accepted
                         // The reason is to make the iOS and android javascript interfaces compatible
-
                         int resId;
                         if (context.getResources().getIdentifier(soundName, "raw", context.getPackageName()) != 0) {
                             resId = context.getResources().getIdentifier(soundName, "raw", context.getPackageName());
@@ -302,9 +312,23 @@ public class RNPushNotificationHelper {
                         }
 
                         soundUri = Uri.parse("android.resource://" + context.getPackageName() + "/" + resId);
+
+                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) { // API 26 and higher
+                            NOTIFICATION_CHANNEL_ID_TMP = NOTIFICATION_CHANNEL_ID +"-"+ soundName;
+                            notification.setChannelId(NOTIFICATION_CHANNEL_ID_TMP);
+
+                            String channelName = bundle.getString("channelName");
+                            if (channelName != null) {
+                                NOTIFICATION_CHANNEL_NAME_TMP = ""+ channelName;
+                            }
+                        }
                     }
                 }
+
                 notification.setSound(soundUri);
+            }
+            if (soundUri == null || Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                notification.setSound(null);
             }
 
             if (bundle.containsKey("ongoing") || bundle.getBoolean("ongoing")) {
@@ -361,15 +385,15 @@ public class RNPushNotificationHelper {
                         continue;
                     }
 
+//                    Intent actionIntent = new Intent();
                     Intent actionIntent = new Intent(context, intentClass);
                     actionIntent.addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP);
                     actionIntent.setAction(context.getPackageName() + "." + action);
-
                     // Add "action" for later identifying which button gets pressed.
                     bundle.putString("action", action);
                     actionIntent.putExtra("notification", bundle);
-
                     PendingIntent pendingActionIntent = PendingIntent.getActivity(context, notificationID, actionIntent,
+//                  PendingIntent pendingActionIntent = PendingIntent.getBroadcast(context, notificationID, actionIntent,
                             PendingIntent.FLAG_UPDATE_CURRENT);
                     notification.addAction(icon, action, pendingActionIntent);
                 }
@@ -553,11 +577,8 @@ public class RNPushNotificationHelper {
         }
     }
 
-    private static boolean channelCreated = false;
-    private void checkOrCreateChannel(NotificationManager manager, Uri soundUri) {
+    private static void checkOrCreateChannel(NotificationManager manager, Uri soundUri) {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O)
-            return;
-        if (channelCreated)
             return;
         if (manager == null)
             return;
@@ -595,23 +616,27 @@ public class RNPushNotificationHelper {
             }
         }
 
-        NotificationChannel channel = new NotificationChannel(NOTIFICATION_CHANNEL_ID, this.config.getChannelName() != null ? this.config.getChannelName() : "rn-push-notification-channel", importance);
+        NotificationChannel channel = manager.getNotificationChannel(NOTIFICATION_CHANNEL_ID_TMP);
+        if (channel == null) {
+            channel = new NotificationChannel(NOTIFICATION_CHANNEL_ID_TMP, NOTIFICATION_CHANNEL_NAME_TMP, importance);
 
-        channel.setDescription(this.config.getChannelDescription());
-        channel.enableLights(true);
-        channel.enableVibration(true);
+            channel.enableLights(true);
+            channel.enableVibration(true); // ??? test when Alarm='none'
 
-        if (soundUri != null) {
-            AudioAttributes audioAttributes = new AudioAttributes.Builder()
-                    .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
-                    .setUsage(AudioAttributes.USAGE_ALARM)
-                    .build();
-            channel.setSound(soundUri, audioAttributes);
-        } else {
-            channel.setSound(null, null);
+            if (soundUri != null) {
+                AudioAttributes audioAttributes = new AudioAttributes.Builder()
+                        .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
+//                        .setUsage(AudioAttributes.USAGE_NOTIFICATION)
+                        .setUsage(AudioAttributes.USAGE_ALARM)
+                        .build();
+                channel.setSound(soundUri, audioAttributes);
+            } else {
+                channel.setSound(null, null);
+            }
+
+            manager.createNotificationChannel(channel);
         }
 
-        manager.createNotificationChannel(channel);
-        channelCreated = true;
+        return;
     }
 }
